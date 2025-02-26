@@ -1,5 +1,6 @@
 #include <Keypad.h>
- #include <LiquidCrystal.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 // ✅ 4x4 Keypad Setup
 const byte ROWS = 4;
@@ -17,7 +18,8 @@ byte rowPins[COLS] = {13, 12, 11, 10}; // Connected to column pins of keypad
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
 // ✅ LCD Setup (RS, E, D4, D5, D6, D7)
-LiquidCrystal lcd(A5, A4, A3, A2, A1, A0);
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // Change 0x27 to 0x3F if needed
+
  
 // ✅ Shift Register (74HC595 for LEDs) (No SPI)
 #define LATCH_PIN 5
@@ -30,28 +32,64 @@ const char correctPassword[] = "222222222"; //"28022025#";
 char enteredPassword[10] = ""; // Store input
 byte index = 0;
 bool accessGranted = false; // Flag to start LEDs
+
+const int numLeds = 8;
+unsigned long previousMillis = 0;
+int currentLed = 0;
+const int interval = 200;
+bool running = true;  // Track if sequence is running
+
+void scrollText(const char* message, int delayTime = 300) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(message);
+    delay(3*delayTime);
+
+    int textLength = strlen(message);
+    if (textLength > 16) {  // Only scroll if text is longer than 16 characters
+        for (int i = 0; i < textLength - 15; i++) {
+            delay(delayTime);  // Adjust speed of scrolling
+            lcd.scrollDisplayLeft();
+        }
+    }
+    delay(2*delayTime);
+}
  
 void setup() {
     Serial.begin(9600);
+
+    Wire.begin();
+    Serial.println("Scanning...");
+    
+    for (byte address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        if (Wire.endTransmission() == 0) {
+            Serial.print("I2C Device found at 0x");
+            Serial.println(address, HEX);
+            break;
+        }
+    }
  
     // Shift Register Setup
     pinMode(LATCH_PIN, OUTPUT);
     pinMode(CLOCK_PIN, OUTPUT);
     pinMode(DATA_PIN, OUTPUT);
 
-    // LCD Setup
-    lcd.begin(16, 2);
+    // Initialize LCD
+    lcd.init();         // Initialize the LCD
+    lcd.backlight();    // Turn on backlight
 
-    delay(500);
-    lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Text");
+    // lcd.print("Text");
+    // while(true){
+    //   scrollText("Alex ist eine fregi Sau");
+    // }
     Serial.println("LCD Initialized");
-
     // lcd.print("Enter Password:");
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     Serial.println("Enter Password:");
+    lcd.print("Enter Password:");
 }
  
 void loop() {
@@ -75,6 +113,8 @@ void loop() {
             // Print input to Serial Monitor
             Serial.print("Current Input: ");
             Serial.println(enteredPassword);
+            lcd.clear();
+            lcd.print(enteredPassword);
  
             // Check if password is complete
             if (index == 9) {
@@ -100,17 +140,20 @@ void loop() {
  
     if (accessGranted) {
         while (accessGranted){
-          if (digitalRead(BUTTON_PIN) == LOW) { 
-            Serial.println("Stopping leds");
-            stopLEDs();
-          } else {
-          Serial.println("Running sequence");
-          runLedSequence();
+           if (digitalRead(BUTTON_PIN) == LOW) {
+              running = false;  // Toggle LED sequence
+              stopLEDs();
+              delay(200);  // Simple debounce
+          }else{
+            Serial.println("Running sequence");
+            runLedSequence();
           }
+          }
+
         } 
         // accessGranted = false; // Reset
         // clearInput();
-    }
+    
 }
 
 // Function to stop LED sequence when button is pressed
@@ -121,15 +164,25 @@ void stopLEDs() {
 
     accessGranted = false;
     clearInput();
+    running=true;
 }
 
 
 // ✅ LED Flow Function (Using shiftOut)
 void runLedSequence() {
-    for (int i = 0; i < 8; i++) {
-        shiftOutLED(1 << i);  
-        delay(200);
+    if (running) {
+        unsigned long currentMillis = millis();
+        if (currentMillis - previousMillis >= interval) {
+            previousMillis = currentMillis;
+            
+            // Move to next LED
+            currentLed = (currentLed + 1) % numLeds;
+
+            // Turn on new LED
+            shiftOutLED(1 << currentLed); 
+        }
     }
+    
 }
  
 // ✅ Shift Out LED Control (No SPI)
@@ -146,3 +199,5 @@ void clearInput() {
     lcd.clear();
     lcd.print("Enter Password:");
 }
+
+
