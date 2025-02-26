@@ -1,6 +1,7 @@
 #include <Keypad.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include "songs.h"  // Include the header file
 
 // ✅ 4x4 Keypad Setup
 const byte ROWS = 4;
@@ -26,6 +27,8 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);  // Change 0x27 to 0x3F if needed
 #define DATA_PIN 3
 #define CLOCK_PIN 2
 #define BUTTON_PIN 4 // Connect button here
+#define BUZZER A0 //buzzer to arduino pin
+
 
  
 const char correctPassword[] = "222222222"; //"28022025#";
@@ -39,37 +42,101 @@ int currentLed = 0;
 const int interval = 200;
 bool running = true;  // Track if sequence is running
 
-void scrollText(const char* message, int delayTime = 300) {
+unsigned long scrollPreviousMillis = 0;
+const int scrollInterval = 300;  // Scrolling speed
+const int startDelay = 300;     // Wait before scrolling starts
+const int endDelay = 300;       // Wait after scrolling ends
+
+int scrollIndex = 0;
+String scrollMessage = "";
+bool scrolling = false;
+bool waitingStart = false;
+bool waitingEnd = false;
+unsigned long waitStartMillis = 0;
+unsigned long waitEndMillis = 0;
+
+void startScrolling(const char* message) {
+    scrollMessage = " " + String(message) + " ";  // Add spaces for smooth scrolling
+    scrollIndex = 0;
+    scrolling = false;  // Wait before starting scroll
+    waitingStart = true;
+    waitStartMillis = millis();
+    
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print(message);
-    delay(3*delayTime);
+    lcd.print(scrollMessage.substring(0, 16));  // Show first part of the message
+}
 
-    int textLength = strlen(message);
-    if (textLength > 16) {  // Only scroll if text is longer than 16 characters
-        for (int i = 0; i < textLength - 15; i++) {
-            delay(delayTime);  // Adjust speed of scrolling
-            lcd.scrollDisplayLeft();
+void updateScrolling() {
+    if (!accessGranted){
+      return;
+    }
+    unsigned long currentMillis = millis();
+
+    // Wait before scrolling starts
+    if (waitingStart) {
+        if (currentMillis - waitStartMillis >= startDelay) {
+            waitingStart = false;
+            scrolling = true;  // Now start scrolling
+            scrollPreviousMillis = millis();  // Reset scrolling timer
+        }
+        return; // Don't proceed further if waiting
+    }
+
+    // Scroll the message if scrolling is active
+    if (scrolling) {
+        if (currentMillis - scrollPreviousMillis >= scrollInterval) {
+            scrollPreviousMillis = currentMillis;
+
+            if (scrollIndex < scrollMessage.length() - 16) {
+                scrollIndex++;
+            } else {
+                scrolling = false;  // Stop scrolling
+                waitingEnd = true;   // Start waiting before clearing
+                waitEndMillis = millis();
+            }
+
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print(scrollMessage.substring(scrollIndex, scrollIndex + 16));
         }
     }
-    delay(2*delayTime);
+
+    // Wait at the end before stopping scrolling
+    if (waitingEnd & accessGranted) {
+        if (currentMillis - waitEndMillis >= endDelay) {
+            waitingEnd = false;
+            lcd.clear();
+            scrolling = false;
+            startScrolling(scrollMessage.c_str());  // Restart scrolling
+        }
+    }
 }
+
+
+// ✅ Shift Out LED Control (No SPI)
+void shiftOutLED(byte pattern) {
+    digitalWrite(LATCH_PIN, LOW);
+    shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, pattern);
+    digitalWrite(LATCH_PIN, HIGH);
+}
+
  
 void setup() {
     Serial.begin(9600);
 
     Wire.begin();
-    Serial.println("Scanning...");
+    Serial.println(F("Scanning..."));
     
     for (byte address = 1; address < 127; address++) {
         Wire.beginTransmission(address);
         if (Wire.endTransmission() == 0) {
-            Serial.print("I2C Device found at 0x");
+            Serial.println(F("I2C Device found at 0x"));
             Serial.println(address, HEX);
             break;
         }
     }
- 
+  
     // Shift Register Setup
     pinMode(LATCH_PIN, OUTPUT);
     pinMode(CLOCK_PIN, OUTPUT);
@@ -84,12 +151,15 @@ void setup() {
     // while(true){
     //   scrollText("Alex ist eine fregi Sau");
     // }
-    Serial.println("LCD Initialized");
+    Serial.println(F("LCD Initialized"));
     // lcd.print("Enter Password:");
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
-    Serial.println("Enter Password:");
+    pinMode(BUZZER, OUTPUT);
+    Serial.println(F("Enter Password:"));
     lcd.print("Enter Password:");
+
+    shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, 0b00000000); // Turn off all LEDs
 }
  
 void loop() {
@@ -102,7 +172,7 @@ void loop() {
     // }
  
     if (key) {
-        Serial.print("Key Pressed: "); Serial.println(key); // Debugging
+        Serial.println(F("Key Pressed: ")); Serial.println(key); // Debugging
  
         if (key == 'D') { 
             clearInput();
@@ -111,7 +181,7 @@ void loop() {
             index++;
  
             // Print input to Serial Monitor
-            Serial.print("Current Input: ");
+            Serial.println(F("Current Input: "));
             Serial.println(enteredPassword);
             lcd.clear();
             lcd.print(enteredPassword);
@@ -123,34 +193,35 @@ void loop() {
                 if (strcmp(enteredPassword, correctPassword) == 0) {
                     lcd.clear();
                     lcd.print("Access Granted!");
-                    Serial.println("✅ Access Granted! LEDs will turn on.");
+                    Serial.println(F("✅ Access Granted! LEDs will turn on."));
                     accessGranted = true; // Start LEDs
                     delay(1000);
                     lcd.clear();
+                    startScrolling("aLEX IST EINE FRECHI sAU!");
                 } else {
                     lcd.clear();
                     lcd.print("Wrong Password");
-                    Serial.println("❌ Wrong Password. Try again.");
+                    Serial.println(F("❌ Wrong Password. Try again."));
                     delay(1000);
                     clearInput();
                 }
             }
         }
     }
- 
-    if (accessGranted) {
-        while (accessGranted){
+    
+
+    if (accessGranted) {    
            if (digitalRead(BUTTON_PIN) == LOW) {
               running = false;  // Toggle LED sequence
               stopLEDs();
               delay(200);  // Simple debounce
           }else{
-            Serial.println("Running sequence");
+            Serial.println(F("Running sequence"));
             runLedSequence();
           }
           }
 
-        } 
+        updateScrolling(); 
         // accessGranted = false; // Reset
         // clearInput();
     
@@ -161,9 +232,15 @@ void stopLEDs() {
     digitalWrite(LATCH_PIN, LOW);
     shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, 0b00000000); // Turn off all LEDs
     digitalWrite(LATCH_PIN, HIGH);
+    cantina(BUZZER);
+    tone(BUZZER, 1000); // Send 1KHz sound signal...
+    delay(10000);         // ...for 1 sec
 
-    accessGranted = false;
     clearInput();
+    accessGranted = false;
+    tone(BUZZER, 3000); // Send 1KHz sound signal...
+    delay(200); 
+    noTone(BUZZER);     // Stop sound...
     running=true;
 }
 
@@ -185,12 +262,7 @@ void runLedSequence() {
     
 }
  
-// ✅ Shift Out LED Control (No SPI)
-void shiftOutLED(byte pattern) {
-    digitalWrite(LATCH_PIN, LOW);
-    shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, pattern);
-    digitalWrite(LATCH_PIN, HIGH);
-}
+
  
 // ✅ Clear Input Function
 void clearInput() {
