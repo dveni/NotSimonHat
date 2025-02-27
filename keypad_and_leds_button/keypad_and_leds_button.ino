@@ -2,6 +2,8 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include "songs.h"  // Include the header file
+#include <avr/pgmspace.h>
+
 
 // ✅ 4x4 Keypad Setup
 const byte ROWS = 4;
@@ -14,7 +16,8 @@ char keys[ROWS][COLS] = {
 };
  
 byte colPins[ROWS] = {9, 8, 7, 6};   // Connected to row pins of keypad
-byte rowPins[COLS] = {13, 12, 11, 10}; // Connected to column pins of keypad
+// byte colPins[ROWS] = {9, 8, 7, 6};   // Connected to row pins of keypad
+byte rowPins[COLS] = {13, 11, 10, 12}; // Connected to column pins of keypad
  
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
@@ -26,20 +29,31 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);  // Change 0x27 to 0x3F if needed
 #define LATCH_PIN 5
 #define DATA_PIN 3
 #define CLOCK_PIN 2
-#define BUTTON_PIN 4 // Connect button here
+// #define BUTTON_PIN 4 // Connect button here
 #define BUZZER A0 //buzzer to arduino pin
 
 
- 
-const char correctPassword[] = "222222222"; //"28022025#";
+bool riddleOn = true;
+const char correctPassword[] = "28022025#";
 char enteredPassword[10] = ""; // Store input
 byte index = 0;
 bool accessGranted = false; // Flag to start LEDs
 
+const char riddle_1[] PROGMEM = "Two plus eight";
+const char riddle_2[] PROGMEM = "makes me whole.";
+const char riddle_3[] PROGMEM = "The shortest";
+const char riddle_4[] PROGMEM = "month plays role.";
+const char riddle_5[] PROGMEM = "The year of";
+const char riddle_6[] PROGMEM = "success,";
+const char riddle_7[] PROGMEM = "Tell me now";
+const char riddle_8[] PROGMEM = "who am I?";
+
+
+
 const int numLeds = 8;
 unsigned long previousMillis = 0;
 int currentLed = 0;
-const int interval = 200;
+const int interval = 100;
 bool running = true;  // Track if sequence is running
 
 unsigned long scrollPreviousMillis = 0;
@@ -71,7 +85,16 @@ void updateScrolling() {
     if (!accessGranted){
       return;
     }
+    Serial.println(F("Update scrolling called"));
     unsigned long currentMillis = millis();
+
+    // Print current state
+    Serial.print(F("Scroll state: waiting="));
+    Serial.print(waitingStart);
+    Serial.print(F(" scrolling="));
+    Serial.print(scrolling);
+    Serial.print(F(" waitEnd="));
+    Serial.println(waitingEnd);
 
     // Wait before scrolling starts
     if (waitingStart) {
@@ -103,7 +126,7 @@ void updateScrolling() {
     }
 
     // Wait at the end before stopping scrolling
-    if (waitingEnd & accessGranted) {
+    if (waitingEnd && accessGranted) {
         if (currentMillis - waitEndMillis >= endDelay) {
             waitingEnd = false;
             lcd.clear();
@@ -113,7 +136,6 @@ void updateScrolling() {
     }
 }
 
-
 // ✅ Shift Out LED Control (No SPI)
 void shiftOutLED(byte pattern) {
     digitalWrite(LATCH_PIN, LOW);
@@ -121,12 +143,42 @@ void shiftOutLED(byte pattern) {
     digitalWrite(LATCH_PIN, HIGH);
 }
 
+// ✅ Store Pointers to PROGMEM Strings in an Array
+const char* const riddle_lines[] PROGMEM = {
+    riddle_1, riddle_2, riddle_3, riddle_4,
+    riddle_5, riddle_6, riddle_7, riddle_8
+};
+
+// ✅ Function to Display a Line from PROGMEM
+void displayRiddleLine(int index) {
+    char buffer[17]; // LCD supports 16 chars per line + null terminator
+    strcpy_P(buffer, (char*)pgm_read_word(&(riddle_lines[index])));
+
+    // lcd.clear();
+    // lcd.setCursor(0, 0);
+    lcd.print(buffer);
+}
+
+// ✅ Show the Riddle with Delay
+void showRiddle() {
+    for (int i = 0; i < 8; i += 2) {
+        displayRiddleLine(i);
+        lcd.setCursor(0, 1);  // Move to the second line
+        displayRiddleLine(i + 1);
+        delay(500);  // Show for 3 seconds
+        lcd.clear();
+    }
+
+    lcd.clear();
+    lcd.print("Enter Password:");
+}
+
  
 void setup() {
     Serial.begin(9600);
 
     Wire.begin();
-    Serial.println(F("Scanning..."));
+    Serial.println(F("Scanning...")); 
     
     for (byte address = 1; address < 127; address++) {
         Wire.beginTransmission(address);
@@ -153,17 +205,28 @@ void setup() {
     // }
     Serial.println(F("LCD Initialized"));
     // lcd.print("Enter Password:");
+    // showRiddle();
 
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    // pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(BUZZER, OUTPUT);
-    Serial.println(F("Enter Password:"));
-    lcd.print("Enter Password:");
+    // Serial.println(F("Enter Password:"));
+    
+    // char buffer[100];  // Temporary buffer to store string
+    // strcpy_P(buffer, riddle);
+    // startScrolling(buffer);
+    // startScrolling(riddle);
 
     shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, 0b00000000); // Turn off all LEDs
 }
  
 void loop() {
+    
+    // if (riddleOn){
+    //   showRiddle();
+    //   riddleOn=false;
+    // }
     char key = keypad.getKey();
+    // Serial.println(key)
 
     // DEBUG
     // while(true){
@@ -176,7 +239,20 @@ void loop() {
  
         if (key == 'D') { 
             clearInput();
-        } else {
+        } else if(key == 'C'){
+          riddleOn = true;
+        } else if (accessGranted && key == 'A'){
+              running = false;  // Toggle LED sequence
+              stopLEDs();
+              delay(200);  // Simple debounce
+        }
+         else if (accessGranted && key == 'B'){
+              running = false;  // Toggle LED sequence
+              stopLEDs();
+              thelionsleeptonight(BUZZER);
+              delay(200);  // Simple debounce
+        }
+         else {
             enteredPassword[index] = key;
             index++;
  
@@ -197,11 +273,16 @@ void loop() {
                     accessGranted = true; // Start LEDs
                     delay(1000);
                     lcd.clear();
-                    startScrolling("aLEX IST EINE FRECHI sAU!");
+                    delay(200);
+                    Serial.println(F("Starting welcome scroll"));
+                    startScrolling("Welcome Dr. Dark Field!Welcome Dr. Dark Field!Welcome Dr. Dark Field!");
+                    // Force initial display
+                    lcd.setCursor(0, 0);
+                    lcd.print(scrollMessage.substring(0, 16));
+                    
                 } else {
                     lcd.clear();
                     lcd.print("Wrong Password");
-                    Serial.println(F("❌ Wrong Password. Try again."));
                     delay(1000);
                     clearInput();
                 }
@@ -211,35 +292,26 @@ void loop() {
     
 
     if (accessGranted) {    
-           if (digitalRead(BUTTON_PIN) == LOW) {
-              running = false;  // Toggle LED sequence
-              stopLEDs();
-              delay(200);  // Simple debounce
-          }else{
-            Serial.println(F("Running sequence"));
-            runLedSequence();
-          }
-          }
-
-        updateScrolling(); 
-        // accessGranted = false; // Reset
-        // clearInput();
-    
+      runLedSequence();
+    }
+    // updateScrolling(); 
+        
 }
 
 // Function to stop LED sequence when button is pressed
 void stopLEDs() {
+    Serial.println(F("stopping leds"));
     digitalWrite(LATCH_PIN, LOW);
     shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, 0b00000000); // Turn off all LEDs
     digitalWrite(LATCH_PIN, HIGH);
-    cantina(BUZZER);
     tone(BUZZER, 1000); // Send 1KHz sound signal...
-    delay(10000);         // ...for 1 sec
+    delay(5000);         // ...for 1 sec
 
     clearInput();
     accessGranted = false;
     tone(BUZZER, 3000); // Send 1KHz sound signal...
     delay(200); 
+    // jigglypuff(BUZZER);
     noTone(BUZZER);     // Stop sound...
     running=true;
 }
@@ -254,7 +326,7 @@ void runLedSequence() {
             
             // Move to next LED
             currentLed = (currentLed + 1) % numLeds;
-
+            // Serial.println(currentLed);
             // Turn on new LED
             shiftOutLED(1 << currentLed); 
         }
@@ -270,6 +342,7 @@ void clearInput() {
     index = 0;
     lcd.clear();
     lcd.print("Enter Password:");
-}
+    Serial.println(F("Enter password:"));
+} 
 
 
