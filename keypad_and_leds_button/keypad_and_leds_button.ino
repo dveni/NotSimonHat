@@ -16,7 +16,6 @@ char keys[ROWS][COLS] = {
 };
  
 byte colPins[ROWS] = {9, 8, 7, 6};   // Connected to row pins of keypad
-// byte colPins[ROWS] = {9, 8, 7, 6};   // Connected to row pins of keypad
 byte rowPins[COLS] = {13, 11, 10, 12}; // Connected to column pins of keypad
  
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
@@ -29,7 +28,6 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);  // Change 0x27 to 0x3F if needed
 #define LATCH_PIN 5
 #define DATA_PIN 3
 #define CLOCK_PIN 2
-// #define BUTTON_PIN 4 // Connect button here
 #define BUZZER A0 //buzzer to arduino pin
 
 
@@ -56,85 +54,6 @@ int currentLed = 0;
 const int interval = 100;
 bool running = true;  // Track if sequence is running
 
-unsigned long scrollPreviousMillis = 0;
-const int scrollInterval = 300;  // Scrolling speed
-const int startDelay = 300;     // Wait before scrolling starts
-const int endDelay = 300;       // Wait after scrolling ends
-
-int scrollIndex = 0;
-String scrollMessage = "";
-bool scrolling = false;
-bool waitingStart = false;
-bool waitingEnd = false;
-unsigned long waitStartMillis = 0;
-unsigned long waitEndMillis = 0;
-
-void startScrolling(const char* message) {
-    scrollMessage = " " + String(message) + " ";  // Add spaces for smooth scrolling
-    scrollIndex = 0;
-    scrolling = false;  // Wait before starting scroll
-    waitingStart = true;
-    waitStartMillis = millis();
-    
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(scrollMessage.substring(0, 16));  // Show first part of the message
-}
-
-void updateScrolling() {
-    if (!accessGranted){
-      return;
-    }
-    Serial.println(F("Update scrolling called"));
-    unsigned long currentMillis = millis();
-
-    // Print current state
-    Serial.print(F("Scroll state: waiting="));
-    Serial.print(waitingStart);
-    Serial.print(F(" scrolling="));
-    Serial.print(scrolling);
-    Serial.print(F(" waitEnd="));
-    Serial.println(waitingEnd);
-
-    // Wait before scrolling starts
-    if (waitingStart) {
-        if (currentMillis - waitStartMillis >= startDelay) {
-            waitingStart = false;
-            scrolling = true;  // Now start scrolling
-            scrollPreviousMillis = millis();  // Reset scrolling timer
-        }
-        return; // Don't proceed further if waiting
-    }
-
-    // Scroll the message if scrolling is active
-    if (scrolling) {
-        if (currentMillis - scrollPreviousMillis >= scrollInterval) {
-            scrollPreviousMillis = currentMillis;
-
-            if (scrollIndex < scrollMessage.length() - 16) {
-                scrollIndex++;
-            } else {
-                scrolling = false;  // Stop scrolling
-                waitingEnd = true;   // Start waiting before clearing
-                waitEndMillis = millis();
-            }
-
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.print(scrollMessage.substring(scrollIndex, scrollIndex + 16));
-        }
-    }
-
-    // Wait at the end before stopping scrolling
-    if (waitingEnd && accessGranted) {
-        if (currentMillis - waitEndMillis >= endDelay) {
-            waitingEnd = false;
-            lcd.clear();
-            scrolling = false;
-            startScrolling(scrollMessage.c_str());  // Restart scrolling
-        }
-    }
-}
 
 // ✅ Shift Out LED Control (No SPI)
 void shiftOutLED(byte pattern) {
@@ -149,30 +68,111 @@ const char* const riddle_lines[] PROGMEM = {
     riddle_5, riddle_6, riddle_7, riddle_8
 };
 
-// ✅ Function to Display a Line from PROGMEM
-void displayRiddleLine(int index) {
-    char buffer[17]; // LCD supports 16 chars per line + null terminator
-    strcpy_P(buffer, (char*)pgm_read_word(&(riddle_lines[index])));
 
-    // lcd.clear();
-    // lcd.setCursor(0, 0);
-    lcd.print(buffer);
-}
-
-// ✅ Show the Riddle with Delay
+// Show the Riddle with Delay
 void showRiddle() {
+    char buffer[17];  // Buffer to hold each line (16 chars + null terminator)
+    
+    // Display the riddle two lines at a time with delay
     for (int i = 0; i < 8; i += 2) {
-        displayRiddleLine(i);
-        lcd.setCursor(0, 1);  // Move to the second line
-        displayRiddleLine(i + 1);
-        delay(500);  // Show for 3 seconds
         lcd.clear();
+        
+        // First line
+        strcpy_P(buffer, (char*)pgm_read_word(&(riddle_lines[i])));
+        lcd.setCursor(0, 0);
+        lcd.print(buffer);
+        
+        // Second line (if available)
+        if (i + 1 < 8) {
+            strcpy_P(buffer, (char*)pgm_read_word(&(riddle_lines[i + 1])));
+            lcd.setCursor(0, 1);
+            lcd.print(buffer);
+        }
+        
+        delay(3000);  // Show each pair of lines for 3 seconds
     }
-
+    
+    // After showing the riddle, return to password entry screen
     lcd.clear();
-    lcd.print("Enter Password:");
+    lcd.print("Enter password:");
+    Serial.println(F("Enter password:"));
 }
 
+// Scrolling text variables
+const char welcomeMessageLine1[] PROGMEM = "Welcome Welcome Welcome Welcome ";
+const char welcomeMessageLine2[] PROGMEM = "Dr. Dark Field! Dr. Dark Field! ";
+unsigned long scrollPreviousMillis = 0;
+const int scrollInterval = 300;  // Scroll speed in milliseconds
+int scrollPosition = 0;
+bool scrollingActive = false;
+
+// Initialize the scrolling text
+void startScrollingText() {
+  scrollingActive = true;
+  scrollPosition = 0;
+  scrollPreviousMillis = millis();
+  lcd.clear();
+}
+
+// Update the scrolling text - call this from loop()
+void updateScrollingText() {
+  if (!scrollingActive) return;
+  
+  unsigned long currentMillis = millis();
+  
+  if (currentMillis - scrollPreviousMillis >= scrollInterval) {
+    scrollPreviousMillis = currentMillis;
+    
+    // Get the length of both welcome messages
+    int messageLength1 = strlen_P(welcomeMessageLine1);
+    int messageLength2 = strlen_P(welcomeMessageLine2);
+    
+    // Clear the LCD
+    lcd.clear();
+    
+    // Update first line
+    for (int i = 0; i < 16; i++) {
+      // Calculate the position in the message string
+      int charPosition = (scrollPosition + i) % messageLength1;
+      
+      // Read the character from PROGMEM
+      char c = pgm_read_byte(&welcomeMessageLine1[charPosition]);
+      
+      // Print the character at the appropriate LCD position
+      lcd.setCursor(i, 0);
+      lcd.print(c);
+    }
+    
+    // Update second line
+    for (int i = 0; i < 16; i++) {
+      // Calculate the position in the message string
+      int charPosition = (scrollPosition + i) % messageLength2;
+      
+      // Read the character from PROGMEM
+      char c = pgm_read_byte(&welcomeMessageLine2[charPosition]);
+      
+      // Print the character at the appropriate LCD position
+      lcd.setCursor(i, 1);
+      lcd.print(c);
+    }
+    
+    // Update scroll position for next time
+    scrollPosition++;
+    
+    // Reset position if it exceeds both message lengths
+    // This ensures smooth looping for both lines
+    if (scrollPosition >= max(messageLength1, messageLength2)) {
+      scrollPosition = 0;
+    }
+  }
+}
+
+// Stop the scrolling text
+void stopScrollingText() {
+  scrollingActive = false;
+  lcd.clear();
+  lcd.print("Enter Password:");
+}
  
 void setup() {
     Serial.begin(9600);
@@ -197,42 +197,26 @@ void setup() {
     // Initialize LCD
     lcd.init();         // Initialize the LCD
     lcd.backlight();    // Turn on backlight
-
     lcd.setCursor(0, 0);
-    // lcd.print("Text");
-    // while(true){
-    //   scrollText("Alex ist eine fregi Sau");
-    // }
     Serial.println(F("LCD Initialized"));
-    // lcd.print("Enter Password:");
-    // showRiddle();
+    // Call the showRiddle function instead of directly printing "Enter password"
+    if (riddleOn) {
+        showRiddle();
+    } else {
+        lcd.print("Enter password:");
+    }
 
-    // pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(BUZZER, OUTPUT);
-    // Serial.println(F("Enter Password:"));
     
-    // char buffer[100];  // Temporary buffer to store string
-    // strcpy_P(buffer, riddle);
-    // startScrolling(buffer);
-    // startScrolling(riddle);
 
     shiftOut(DATA_PIN, CLOCK_PIN, MSBFIRST, 0b00000000); // Turn off all LEDs
 }
  
 void loop() {
     
-    // if (riddleOn){
-    //   showRiddle();
-    //   riddleOn=false;
-    // }
+    
     char key = keypad.getKey();
-    // Serial.println(key)
-
-    // DEBUG
-    // while(true){
-    //   Serial.println(digitalRead(BUTTON_PIN));
-    //   delay(1000);
-    // }
+    
  
     if (key) {
         Serial.println(F("Key Pressed: ")); Serial.println(key); // Debugging
@@ -240,15 +224,17 @@ void loop() {
         if (key == 'D') { 
             clearInput();
         } else if(key == 'C'){
-          riddleOn = true;
+          showRiddle();
         } else if (accessGranted && key == 'A'){
               running = false;  // Toggle LED sequence
               stopLEDs();
+              stopScrollingText();  // Stop the scrolling text
               delay(200);  // Simple debounce
         }
          else if (accessGranted && key == 'B'){
               running = false;  // Toggle LED sequence
               stopLEDs();
+              stopScrollingText();  // Stop the scrolling text
               thelionsleeptonight(BUZZER);
               delay(200);  // Simple debounce
         }
@@ -275,10 +261,8 @@ void loop() {
                     lcd.clear();
                     delay(200);
                     Serial.println(F("Starting welcome scroll"));
-                    startScrolling("Welcome Dr. Dark Field!Welcome Dr. Dark Field!Welcome Dr. Dark Field!");
-                    // Force initial display
-                    lcd.setCursor(0, 0);
-                    lcd.print(scrollMessage.substring(0, 16));
+                    startScrollingText();
+                    
                     
                 } else {
                     lcd.clear();
@@ -294,7 +278,8 @@ void loop() {
     if (accessGranted) {    
       runLedSequence();
     }
-    // updateScrolling(); 
+    // Update the scrolling text (does nothing if scrolling is not active)
+    updateScrollingText();
         
 }
 
@@ -307,6 +292,7 @@ void stopLEDs() {
     tone(BUZZER, 1000); // Send 1KHz sound signal...
     delay(5000);         // ...for 1 sec
 
+    stopScrollingText();  // Stop the scrolling text
     clearInput();
     accessGranted = false;
     tone(BUZZER, 3000); // Send 1KHz sound signal...
